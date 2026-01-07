@@ -53,14 +53,7 @@ Use these exact settings:
 - **Start Command**: `gunicorn app:app`
 - **Plan**: `Free`
 
-#### 5️⃣ Add Environment Variables
-In "Environment" section, add:
-```
-GEMINI_API_KEY = AIzaSyAXSGUjs1nGWXDl_vziRY0sIVn1JmGrot8
-OPENROUTER_API_KEY = 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
-SECRET_KEY = [click "Generate" or use: python -c "import os; print(os.urandom(24).hex())"]
-FLASK_ENV = production
-```
+
 
 Then click **"Create Web Service"** and wait 2-5 minutes!
 
@@ -141,12 +134,6 @@ Before deployment, verify:
 
 ---
 
-## 🔑 Your API Keys
-
-### Gemini API (Voice Transcription)
-- **Where**: Google AI Studio
-- **URL**: https://makersuite.google.com/app/apikey
-- **Current Key**: Already in `.env`
 
 ### OpenRouter API (Chat)
 - **Where**: OpenRouter
@@ -183,3 +170,4 @@ Before deployment, verify:
 **You're all set! Start with local development, then deploy when ready.** 🚀
 
 Good luck with your Banking Form Assistant! 🏦
+
