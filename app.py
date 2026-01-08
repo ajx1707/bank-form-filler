@@ -9,6 +9,7 @@ import json
 import re
 import traceback
 from openai import OpenAI
+from groq import Groq
 from form_prompts import get_system_prompt  # Import form-specific prompts
 from dotenv import load_dotenv
 
@@ -23,18 +24,35 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', os.urandom(24).hex())
 # API Keys from environment variables
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
+OPENROUTER_API_KEY_2 = os.getenv('OPENROUTER_API_KEY_2')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+GROQ_API_KEY_2 = os.getenv('GROQ_API_KEY_2')
 
 # Validate API keys
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable is not set!")
 if not OPENROUTER_API_KEY:
-    raise ValueError("OPENROUTER_API_KEY environment variable is not set!")
+    print("WARNING: Primary OPENROUTER_API_KEY not set!")
 
-# Initialize OpenRouter client
-openrouter_client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY
-)
+# Initialize OpenRouter clients (primary and backup)
+openrouter_clients = []
+if OPENROUTER_API_KEY:
+    openrouter_clients.append(OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=OPENROUTER_API_KEY
+    ))
+if OPENROUTER_API_KEY_2:
+    openrouter_clients.append(OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=OPENROUTER_API_KEY_2
+    ))
+
+# Initialize Groq clients (fallback)
+groq_clients = []
+if GROQ_API_KEY:
+    groq_clients.append(Groq(api_key=GROQ_API_KEY))
+if GROQ_API_KEY_2:
+    groq_clients.append(Groq(api_key=GROQ_API_KEY_2))
 
 # Store conversation history and collected form data per session
 conversation_sessions = {}
@@ -137,8 +155,8 @@ def chat():
         form_type = data.get('form_type', '')  # Get pre-selected form type
         is_from_audio = data.get('is_from_audio', False)  # Check if input is from audio
         
-        # Use Gemini for audio, OpenRouter GPT for text
-        use_gemini = is_from_audio
+        # Use Gemini for both audio and text (OpenRouter alternative)
+        use_gemini = True  # Changed to always use Gemini
         
         # Debug logging
         print(f"DEBUG: form_type={form_type}, is_from_audio={is_from_audio}, use_gemini={use_gemini}")
@@ -312,7 +330,7 @@ def chat():
             response = chat.send_message(user_message)
             response_text = response.text
         else:
-            # Use OpenRouter GPT for text input via OpenAI client
+            # Use OpenRouter with fallback to Groq for text input
             messages = []
             for msg in conversation_sessions[session_id]:
                 if msg['role'] == 'user':
@@ -320,18 +338,51 @@ def chat():
                 elif msg['role'] == 'model':
                     messages.append({"role": "assistant", "content": msg['parts'][0]})
             
-            try:
-                print(f"DEBUG: Attempting OpenRouter API call...")
-                response = openrouter_client.chat.completions.create(
-                    model="openai/gpt-oss-120b:free",
-                    messages=messages,
-                    extra_body={"reasoning": {"enabled": True}}
-                )
-                response_text = response.choices[0].message.content
-                print(f"DEBUG: OpenRouter response received successfully")
-            except Exception as e:
-                print(f"DEBUG: OpenRouter API error: {str(e)}")
-                raise Exception(f"OpenRouter API error: {str(e)}")
+            response_text = None
+            last_error = None
+            
+            # Try OpenRouter clients (primary and backup)
+            for i, client in enumerate(openrouter_clients, 1):
+                try:
+                    print(f"DEBUG: Attempting OpenRouter API call (key #{i})...")
+                    response = client.chat.completions.create(
+                        model="openai/gpt-oss-120b:free",
+                        messages=messages,
+                        extra_body={"reasoning": {"enabled": True}}
+                    )
+                    response_text = response.choices[0].message.content
+                    print(f"DEBUG: OpenRouter key #{i} - Success!")
+                    break
+                except Exception as e:
+                    last_error = str(e)
+                    print(f"DEBUG: OpenRouter key #{i} failed: {last_error}")
+                    continue
+            
+            # If all OpenRouter keys failed, try Groq as fallback
+            if not response_text:
+                print(f"DEBUG: All OpenRouter keys failed. Trying Groq fallback...")
+                for i, groq_client in enumerate(groq_clients, 1):
+                    try:
+                        print(f"DEBUG: Attempting Groq API call (key #{i})...")
+                        completion = groq_client.chat.completions.create(
+                            model="openai/gpt-oss-120b",
+                            messages=messages,
+                            temperature=1,
+                            max_completion_tokens=8192,
+                            top_p=1,
+                            stream=False
+                        )
+                        response_text = completion.choices[0].message.content
+                        print(f"DEBUG: Groq key #{i} - Success!")
+                        break
+                    except Exception as e:
+                        last_error = str(e)
+                        print(f"DEBUG: Groq key #{i} failed: {last_error}")
+                        continue
+            
+            # If all APIs failed, raise error
+            if not response_text:
+                raise Exception(f"All API keys failed. Last error: {last_error}")
         
         # Add assistant response to history
         conversation_sessions[session_id].append({
